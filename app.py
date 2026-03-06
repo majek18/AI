@@ -2,77 +2,100 @@ import streamlit as st
 import google.generativeai as genai
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="Gemini Chat Pro", page_icon="🤖", layout="centered")
+st.set_page_config(
+    page_title="Gemini Chat Pro",
+    page_icon="🤖",
+    layout="centered"
+)
 
-# Stylizacja nagłówka
 st.markdown("<h1 style='text-align: center;'>💬 Chatbot Gemini AI</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 # --- KONFIGURACJA API ---
-# Upewnij się, że w Streamlit Cloud -> Settings -> Secrets masz:
-# GOOGLE_API_KEY = "twój_klucz"
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("❌ Brakuje klucza API! Dodaj GOOGLE_API_KEY w ustawieniach Secrets.")
+    st.error("❌ Brakuje klucza API! Dodaj GOOGLE_API_KEY w Streamlit Secrets.")
     st.stop()
 
-# --- INICJALIZACJA MODELU ---
-# Używamy modelu flash, który jest szybki i darmowy w ramach limitów
+# --- ŁADOWANIE MODELU ---
 @st.cache_resource
 def load_model():
-    return genai.GenerativeModel('gemini-1.5-flash')
+    return genai.GenerativeModel("gemini-2.5-flash")
 
 model = load_model()
 
-# --- ZARZĄDZANIE HISTORIĄ ---
+# --- HISTORIA ROZMOWY ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Przycisk do resetowania czatu w sidebarze
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("⚙️ Opcje")
+
     if st.button("🗑️ Wyczyść historię", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
-    st.info("Model: Gemini 1.5 Flash")
 
-# Wyświetlanie dotychczasowych wiadomości
+    st.info("Model: Gemini 2.5 Flash")
+
+# --- WYŚWIETLANIE HISTORII ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- OBSŁUGA CZATU ---
+# --- CZAT ---
 if prompt := st.chat_input("W czym mogę Ci dzisiaj pomóc?"):
-    # 1. Wyświetl wiadomość użytkownika
-    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # zapisz wiadomość użytkownika
+    st.session_state.messages.append({
+        "role": "user",
+        "content": prompt
+    })
+
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. Generowanie odpowiedzi przez AI
+    # odpowiedź AI
     with st.chat_message("assistant"):
+
         response_placeholder = st.empty()
         response_placeholder.markdown("*(Myślę...)*")
-        
+
         try:
-            # Przekazujemy prompt do modelu
-            # Uwaga: dla zachowania pełnej pamięci długich rozmów należałoby użyć start_chat()
-            response = model.generate_content(prompt)
-            
+
+            # budujemy historię dla modelu
+            history = []
+            for msg in st.session_state.messages:
+                role = "user" if msg["role"] == "user" else "model"
+                history.append({
+                    "role": role,
+                    "parts": [msg["content"]]
+                })
+
+            chat = model.start_chat(history=history[:-1])
+
+            response = chat.send_message(prompt)
+
             if response.text:
                 full_response = response.text
                 response_placeholder.markdown(full_response)
-                # Zapisz odpowiedź w historii
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": full_response
+                })
+
             else:
-                st.warning("⚠️ Model nie wygenerował tekstu (możliwa blokada treści).")
-                
+                response_placeholder.warning("⚠️ Model nie wygenerował odpowiedzi.")
+
         except Exception as e:
-            # Obsługa błędów (np. 404 lub 429)
-            error_msg = str(e)
-            if "404" in error_msg:
-                st.error("❌ Błąd 404: Model nie został znaleziony. Spróbuj zmienić nazwę modelu w kodzie na 'gemini-pro'.")
-            elif "429" in error_msg:
-                st.error("⏳ Przekroczono limit zapytań (Quota). Poczekaj chwilę.")
+
+            error = str(e)
+
+            if "404" in error:
+                st.error("❌ Model nie istnieje lub API jest nieaktywne.")
+            elif "429" in error:
+                st.error("⏳ Przekroczono limit zapytań. Spróbuj za chwilę.")
             else:
-                st.error(f"❌ Wystąpił nieoczekiwany błąd: {e}")
+                st.error(f"❌ Błąd: {error}")
